@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PromptArena - AI Image Challenge</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎨 PromptArena</h1>
+            <p>Thách thức tạo ảnh với AI - Ai giống nhất sẽ thắng!</p>
+        </div>
+
+        <!-- Join Form -->
+        <div id="joinSection" class="card">
+            <h2>Tham gia game</h2>
+            <form id="joinForm">
+                <div class="form-group">
+                    <label for="playerName">Tên của bạn:</label>
+                    <input type="text" id="playerName" required placeholder="Nhập tên của bạn">
+                </div>
+                <div class="form-group">
+                    <label for="playerEmail">Email:</label>
+                    <input type="email" id="playerEmail" required placeholder="Nhập email của bạn">
+                </div>
+                <button type="submit" class="btn btn-primary">🚀 Tham gia game</button>
+            </form>
+        </div>
+
+        <!-- Waiting Room -->
+        <div id="waitingSection" class="card hidden">
+            <h2>Phòng chờ</h2>
+            <div class="status status-waiting">
+                <span id="playerCount">0</span>/20 người chơi - Đang chờ bắt đầu...
+            </div>
+            
+            <div class="players-grid" id="playersGrid">
+                <!-- Players will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Game Playing -->
+        <div id="gameSection" class="card hidden">
+            <h2>🎯 Thử thách</h2>
+            <p><strong>Nhiệm vụ:</strong> Tạo prompt để sinh ảnh giống với ảnh tham khảo nhất có thể!</p>
+            
+            <!-- Timer -->
+            <div id="timer" class="timer">
+                ⏰ Thời gian còn lại: <span id="timeLeft">120</span>s
+            </div>
+
+            <div class="game-area">
+                <!-- Reference Image -->
+                <div class="reference-image">
+                    <h3>🖼️ Ảnh tham khảo</h3>
+                    <img id="referenceImg" src="" alt="Ảnh tham khảo">
+                </div>
+
+                <!-- Prompt Area -->
+                <div class="prompt-area">
+                    <h3>✍️ Nhập prompt của bạn</h3>
+                    <div class="form-group">
+                        <label for="promptInput">Mô tả ảnh bạn muốn tạo:</label>
+                        <textarea id="promptInput" rows="4" placeholder="Ví dụ: A beautiful sunset over mountains with orange sky..."></textarea>
+                    </div>
+                    <button id="submitBtn" class="btn btn-success">🎨 Tạo ảnh</button>
+                </div>
+            </div>
+
+            <!-- Generated Image -->
+            <div id="generatedSection" class="generated-image hidden">
+                <h3>🎨 Ảnh bạn đã tạo</h3>
+                <img id="generatedImg" src="" alt="Ảnh đã tạo">
+                <p>Đang chờ các người chơi khác hoàn thành...</p>
+            </div>
+        </div>
+
+        <!-- Scoring Phase -->
+        <div id="scoringSection" class="card hidden">
+            <div class="loading">
+                <div class="spinner"></div>
+                <h2>🏆 Đang chấm điểm...</h2>
+                <p>AI đang so sánh các ảnh và tính điểm. Vui lòng đợi...</p>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div id="resultsSection" class="card hidden">
+            <h2>🏆 Kết quả</h2>
+            <div class="leaderboard" id="leaderboard">
+                <!-- Leaderboard will be loaded here -->
+            </div>
+            <div style="text-align: center; margin-top: 30px;">
+                <p>Game sẽ tự động reset để chờ 20 người chơi tiếp theo...</p>
+            </div>
+        </div>
+
+        <!-- Messages -->
+        <div id="messages"></div>
+    </div>
+
+    <!-- Socket.IO -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="player.js"></script>
+</body>
+</html>

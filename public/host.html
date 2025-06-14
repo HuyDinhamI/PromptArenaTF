@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PromptArena - Host Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎮 PromptArena Host</h1>
+            <p>Quản lý game và theo dõi người chơi</p>
+        </div>
+
+        <!-- Game Status Card -->
+        <div class="card">
+            <h2>📊 Trạng thái game</h2>
+            <div class="status" id="gameStatus">
+                <span id="gameState">waiting</span>
+            </div>
+            
+            <div style="display: flex; gap: 20px; margin: 20px 0; align-items: center;">
+                <div>
+                    <strong>Người chơi:</strong> 
+                    <span id="playerCount">0</span>/<span id="maxPlayers">20</span>
+                </div>
+                <div id="timerInfo" class="hidden">
+                    <strong>Thời gian còn lại:</strong> 
+                    <span id="gameTimer">120</span>s
+                </div>
+            </div>
+
+            <!-- Control Buttons -->
+            <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                <button id="startBtn" class="btn btn-success" disabled>
+                    🚀 Bắt đầu game
+                </button>
+                <button id="kickAllBtn" class="btn btn-warning">
+                    👥 Kick tất cả
+                </button>
+                <button id="resetBtn" class="btn btn-danger">
+                    🔄 Reset game
+                </button>
+                <button id="refreshBtn" class="btn btn-primary">
+                    🔃 Làm mới
+                </button>
+            </div>
+        </div>
+
+        <!-- Reference Image Card -->
+        <div id="imageCard" class="card hidden">
+            <h2>🖼️ Ảnh tham khảo hiện tại</h2>
+            <div class="reference-image">
+                <img id="currentReferenceImg" src="" alt="Ảnh tham khảo" style="max-height: 300px;">
+                <p id="imageName"></p>
+            </div>
+        </div>
+
+        <!-- Players Management -->
+        <div class="card">
+            <h2>👥 Quản lý người chơi</h2>
+            <div class="players-grid" id="playersGrid">
+                <div style="text-align: center; color: #666; grid-column: 1/-1;">
+                    Chưa có người chơi nào
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Progress -->
+        <div id="progressCard" class="card hidden">
+            <h2>📈 Tiến trình game</h2>
+            <div id="progressInfo">
+                <div style="margin: 10px 0;">
+                    <strong>Đã submit prompt:</strong> 
+                    <span id="submissionCount">0</span>/<span id="totalPlayers">0</span>
+                </div>
+                <div style="margin: 10px 0;">
+                    <strong>Phase hiện tại:</strong> 
+                    <span id="currentPhase">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Leaderboard -->
+        <div id="leaderboardCard" class="card hidden">
+            <h2>🏆 Bảng xếp hạng</h2>
+            <div class="leaderboard" id="hostLeaderboard">
+                <!-- Leaderboard will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Messages -->
+        <div id="messages"></div>
+    </div>
+
+    <!-- Socket.IO -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="host.js"></script>
+</body>
+</html>
