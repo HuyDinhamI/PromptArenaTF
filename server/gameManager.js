@@ -15,6 +15,18 @@ class GameManager {
         this.scores = new Map(); // playerId -> score info
         this.aiService = new AIService();
         this.gameTimer = null;
+        
+        // Initialize AI clients
+        this.initializeAI();
+    }
+
+    async initializeAI() {
+        try {
+            await this.aiService.initializeClients();
+            console.log('✅ GameManager: AI services ready');
+        } catch (error) {
+            console.error('❌ GameManager: Failed to initialize AI services', error);
+        }
     }
 
     // Thêm người chơi mới
@@ -197,15 +209,24 @@ class GameManager {
         try {
             console.log(`📝 ${player.name} submitted prompt: "${prompt}"`);
             
-            // Sinh ảnh từ Leonardo AI
-            const generatedImageUrl = await this.aiService.generateImage(prompt);
+            // Step 1: Translate prompt to English (if enabled)
+            const translatedPrompt = await this.aiService.translateToEnglish(prompt);
             
-            // Lưu submission
+            // Log translation result
+            if (config.TRANSLATION.ENABLED && translatedPrompt !== prompt) {
+                console.log(`🌐 Translation: "${prompt}" → "${translatedPrompt}"`);
+            }
+            
+            // Step 2: Generate image using translated prompt
+            const generatedImageUrl = await this.aiService.generateImage(translatedPrompt);
+            
+            // Step 3: Save submission (store original prompt for display, but note translation)
             this.submissions.set(playerId, {
                 playerId: playerId,
                 playerName: player.name,
                 playerEmail: player.email,
-                prompt: prompt,
+                prompt: prompt, // Original prompt for display
+                translatedPrompt: translatedPrompt, // Translated prompt used for generation
                 generatedImageUrl: generatedImageUrl,
                 submittedAt: new Date()
             });

@@ -101,3 +101,5 @@ config.backup.js
 
 .memory-bank
 memory-bank
+genImage.py
+scoring.py

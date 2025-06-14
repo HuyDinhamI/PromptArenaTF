@@ -2,11 +2,49 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
+const { OpenAI } = require('openai');
 
 class AIService {
     constructor() {
         this.leonardoApiKey = config.LEONARDO_API_KEY;
         this.openaiApiKey = config.OPENAI_API_KEY;
+        this.geminiApiKey = config.GEMINI_API_KEY;
+        
+        this.initializeClients();
+    }
+
+    async initializeClients() {
+        // Dynamic import for node-fetch (ES module)
+        const fetch = await import('node-fetch');
+        const fetchFn = fetch.default;
+        const { Headers, Blob, FormData } = fetch;
+        
+        // Polyfill Web APIs globally if not exists
+        if (!globalThis.Headers) {
+            globalThis.Headers = Headers;
+        }
+        if (!globalThis.Blob) {
+            globalThis.Blob = Blob;
+        }
+        if (!globalThis.FormData) {
+            globalThis.FormData = FormData;
+        }
+        
+        // Initialize OpenAI client
+        this.openaiClient = new OpenAI({
+            apiKey: this.openaiApiKey,
+            baseURL: config.OPENAI.BASE_URL,
+            fetch: fetchFn
+        });
+        
+        // Initialize Gemini client (using OpenAI-compatible API)
+        this.geminiClient = new OpenAI({
+            apiKey: this.geminiApiKey,
+            baseURL: config.GEMINI.BASE_URL,
+            fetch: fetchFn
+        });
+        
+        console.log('✅ AI clients initialized with Web APIs polyfill support');
     }
 
     // Test Leonardo AI API connection và model
@@ -254,10 +292,56 @@ class AIService {
         }
     }
 
-    // OpenAI - Chấm điểm so sánh 2 ảnh
-    async compareImages(originalImagePath, generatedImageUrl) {
+    // Gemini - Dịch prompt từ tiếng Việt sang tiếng Anh
+    async translateToEnglish(vietnamesePrompt) {
+        if (!config.TRANSLATION.ENABLED) {
+            console.log('🔄 Translation disabled, returning original prompt');
+            return vietnamesePrompt;
+        }
+
         try {
-            console.log(`🔍 Comparing images: ${originalImagePath} vs ${generatedImageUrl}`);
+            console.log(`🌐 Translating prompt: "${vietnamesePrompt}"`);
+            
+            const response = await this.geminiClient.chat.completions.create({
+                model: config.GEMINI.MODEL,
+                messages: [
+                    {
+                        role: "system", 
+                        content: "Bạn hãy dịch câu sau sang tiếng anh"
+                    },
+                    {
+                        role: "user",
+                        content: vietnamesePrompt
+                    }
+                ]
+            });
+
+            const translatedPrompt = response.choices[0].message.content.trim();
+            console.log(`✅ Translated: "${vietnamesePrompt}" → "${translatedPrompt}"`);
+            return translatedPrompt;
+            
+        } catch (error) {
+            console.error('❌ Translation error:', error.message);
+            console.log('⚠️ Fallback: Using original prompt');
+            return vietnamesePrompt; // Fallback to original prompt
+        }
+    }
+
+    // Switch giữa OpenAI và Gemini cho image comparison
+    async compareImages(originalImagePath, generatedImageUrl) {
+        console.log(`🔍 Image comparison using: ${config.SCORING.MODEL.toUpperCase()}`);
+        
+        if (config.SCORING.MODEL === 'gemini') {
+            return await this.compareImagesGemini(originalImagePath, generatedImageUrl);
+        } else {
+            return await this.compareImagesOpenAI(originalImagePath, generatedImageUrl);
+        }
+    }
+
+    // OpenAI - Chấm điểm so sánh 2 ảnh
+    async compareImagesOpenAI(originalImagePath, generatedImageUrl) {
+        try {
+            console.log(`🔍 OpenAI comparing images: ${originalImagePath} vs ${generatedImageUrl}`);
             
             // Encode ảnh gốc
             const originalBase64 = this.encodeImageToBase64(originalImagePath);
@@ -297,22 +381,13 @@ class AIService {
                 }
             ];
 
-            const response = await axios.post(
-                `${config.OPENAI.BASE_URL}/chat/completions`,
-                {
-                    model: config.OPENAI.MODEL,
-                    messages: messages,
-                    max_tokens: config.OPENAI.MAX_TOKENS
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${this.openaiApiKey}`,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
+            const response = await this.openaiClient.chat.completions.create({
+                model: config.OPENAI.MODEL,
+                messages: messages,
+                max_tokens: config.OPENAI.MAX_TOKENS
+            });
 
-            const content = response.data.choices[0].message.content;
+            const content = response.choices[0].message.content;
             console.log("🤖 OpenAI Response:", content);
             
             // Clean response to remove markdown code blocks if present
@@ -354,7 +429,102 @@ class AIService {
                 };
             }
         } catch (error) {
-            console.error('❌ Lỗi chấm điểm:', error.message);
+            console.error('❌ Lỗi chấm điểm OpenAI:', error.message);
+            throw error;
+        }
+    }
+
+    // Gemini - Chấm điểm so sánh 2 ảnh
+    async compareImagesGemini(originalImagePath, generatedImageUrl) {
+        try {
+            console.log(`🔍 Gemini comparing images: ${originalImagePath} vs ${generatedImageUrl}`);
+            
+            // Encode ảnh gốc
+            const originalBase64 = this.encodeImageToBase64(originalImagePath);
+            console.log(`✅ Original image base64 length: ${originalBase64.length} characters`);
+            
+            // Download và encode ảnh sinh ra
+            const generatedBase64 = await this.downloadImageToBase64(generatedImageUrl);
+            
+            // Detect MIME types
+            const originalMimeType = originalImagePath.toLowerCase().includes('.jpg') || originalImagePath.toLowerCase().includes('.jpeg') ? 'image/jpeg' : 'image/png';
+            const generatedMimeType = generatedImageUrl.toLowerCase().includes('.jpg') || generatedImageUrl.toLowerCase().includes('.jpeg') ? 'image/jpeg' : 'image/png';
+            
+            console.log(`🎭 Original image MIME type: ${originalMimeType}`);
+            console.log(`🎭 Generated image MIME type: ${generatedMimeType}`);
+
+            const messages = [
+                {
+                    role: "user",
+                    content: [
+                        {
+                            type: "text",
+                            text: "Bạn sẽ được hiển thị hai hình ảnh. Hình ảnh đầu tiên là hình ảnh tham khảo (bản gốc), và hình ảnh thứ hai là hình ảnh thử nghiệm. Đánh giá mức độ giống nhau của hình ảnh thứ hai với hình ảnh đầu tiên theo tỷ lệ phần trăm (0% đến 100%). Ngoài ra, hãy giải thích ngắn gọn lý do của bạn. Trả về kết quả dưới dạng JSON với format: {\"similarity_score\": số, \"explanation\": \"giải thích\"}"
+                        },
+                        {
+                            type: "image_url",
+                            image_url: {
+                                url: `data:${originalMimeType};base64,${originalBase64}`
+                            }
+                        },
+                        {
+                            type: "image_url",
+                            image_url: {
+                                url: `data:${generatedMimeType};base64,${generatedBase64}`
+                            }
+                        }
+                    ]
+                }
+            ];
+
+            const response = await this.geminiClient.chat.completions.create({
+                model: config.GEMINI.MODEL,
+                messages: messages
+            });
+
+            const content = response.choices[0].message.content;
+            console.log("🤖 Gemini Response:", content);
+            
+            // Clean response to remove markdown code blocks if present
+            let cleanContent = content.trim();
+            
+            // Remove markdown code blocks (```json ... ```)
+            cleanContent = cleanContent.replace(/```json\s*/g, '').replace(/```\s*$/g, '');
+            
+            console.log("🧹 Cleaned content:", cleanContent);
+            
+            // Parse JSON response
+            try {
+                const result = JSON.parse(cleanContent);
+                return {
+                    similarity_score: parseFloat(result.similarity_score),
+                    explanation: result.explanation
+                };
+            } catch (parseError) {
+                console.log("❌ JSON parse failed, trying fallback extraction...");
+                
+                // Fallback 1: Extract from JSON pattern in text
+                const jsonMatch = cleanContent.match(/\{[^}]*"similarity_score"\s*:\s*(\d+(?:\.\d+)?)[^}]*"explanation"\s*:\s*"([^"]+)"[^}]*\}/);
+                if (jsonMatch) {
+                    console.log("✅ Extracted via regex pattern");
+                    return {
+                        similarity_score: parseFloat(jsonMatch[1]),
+                        explanation: jsonMatch[2]
+                    };
+                }
+                
+                // Fallback 2: Extract score from percentage and use full content as explanation
+                const scoreMatch = cleanContent.match(/(\d+(?:\.\d+)?)\s*%/);
+                const score = scoreMatch ? parseFloat(scoreMatch[1]) : 0;
+                
+                console.log("⚠️ Using fallback: score extraction + full content");
+                return {
+                    similarity_score: score,
+                    explanation: cleanContent
+                };
+            }
+        } catch (error) {
+            console.error('❌ Lỗi chấm điểm Gemini:', error.message);
             throw error;
         }
     }

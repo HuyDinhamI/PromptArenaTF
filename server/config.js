@@ -1,10 +1,12 @@
-// Load environment variables
-require('dotenv').config();
+// Load environment variables from parent directory
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 // API Keys Configuration
 module.exports = {
     LEONARDO_API_KEY: process.env.LEONARDO_API_KEY,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     
     // Leonardo AI Settings
     LEONARDO: {
@@ -19,6 +21,24 @@ module.exports = {
         BASE_URL: "https://api.openai.com/v1",
         MODEL: "gpt-4o-mini",
         MAX_TOKENS: 500
+    },
+    
+    // Gemini Settings
+    GEMINI: {
+        BASE_URL: process.env.GEMINI_BASE_URL,
+        API_KEY: process.env.GEMINI_API_KEY,
+        MODEL: "gemini-1.5-flash"
+    },
+    
+    // Scoring Configuration
+    SCORING: {
+        MODEL: 'gemini', // 'openai' hoặc 'gemini' - switch ở đây
+    },
+    
+    // Translation Configuration
+    TRANSLATION: {
+        ENABLED: true, // true/false - tắt bật translation
+        MODEL: 'gemini'
     },
     
     // Game Settings
