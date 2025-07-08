@@ -10,7 +10,7 @@ body {
     background-color: #667eea; /* Fallback color */
     background: 
         linear-gradient(135deg, rgba(102, 126, 234, 0.8) 0%, rgba(118, 75, 162, 0.8) 100%),
-        url('images/start_bg.jpg') center/cover no-repeat fixed;
+        url('images/BG_TF.png') center/cover no-repeat fixed;
     min-height: 100vh;
     color: #333;
 }
