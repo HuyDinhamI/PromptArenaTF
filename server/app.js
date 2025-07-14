@@ -243,13 +243,20 @@ server.listen(PORT, async () => {
     console.log(`🎮 Game URL: http://localhost:${PORT}`);
     console.log(`🏠 Host URL: http://localhost:${PORT}/host.html`);
     console.log('================================');
-    
+
+    // In ra giá trị API key khi khởi động server (chỉ in 10 ký tự đầu)
+    const config = require('./config');
+    console.log(`🔑 LEONARDO_API_KEY: ${config.LEONARDO_API_KEY ? config.LEONARDO_API_KEY.substring(0, 10) + '...' : '[NOT SET]'}`);
+    console.log(`🔑 OPENAI_API_KEY: ${config.OPENAI_API_KEY ? config.OPENAI_API_KEY.substring(0, 10) + '...' : '[NOT SET]'}`);
+    console.log(`🔑 GEMINI_API_KEY: ${config.GEMINI_API_KEY ? config.GEMINI_API_KEY.substring(0, 10) + '...' : '[NOT SET]'}`);
+    console.log('================================');
+
     // Test Leonardo AI API on startup
     console.log('\n🧪 Running Leonardo AI API tests...');
     try {
         const aiService = new (require('./aiService'))();
         const testResult = await aiService.testLeonardoAPI();
-        
+
         if (testResult) {
             console.log('✅ Leonardo AI API is ready!');
         } else {
@@ -259,7 +266,7 @@ server.listen(PORT, async () => {
         console.error('🚨 Leonardo AI API test error:', error.message);
         console.error('💡 Please check your API key and configuration');
     }
-    
+
     console.log('\n🎯 Server ready for connections!\n');
 });
 

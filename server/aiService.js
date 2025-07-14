@@ -78,18 +78,19 @@ class AIService {
             console.error('❌ Leonardo API test failed:');
             console.error(`   🚨 Error: ${error.message}`);
             
-            if (error.response) {
-                console.error(`   📡 Status: ${error.response.status}`);
-                console.error(`   📝 Response:`, JSON.stringify(error.response.data, null, 2));
-                
-                if (error.response.status === 401) {
-                    console.error('🔑 Invalid API key or expired token');
-                } else if (error.response.status === 403) {
-                    console.error('🚫 Access forbidden - check permissions');
-                } else if (error.response.status === 429) {
-                    console.error('🚦 Rate limit exceeded');
-                }
-            }
+if (error.response) {
+    console.error(`   📡 Status: ${error.response.status}`);
+    console.error(`   📝 Response:`, JSON.stringify(error.response.data, null, 2));
+    console.error(`   📋 Response Headers:`, JSON.stringify(error.response.headers, null, 2));
+    console.error(`   📦 Request Headers:`, JSON.stringify(error.config?.headers, null, 2));
+    if (error.response.status === 401) {
+        console.error('🔑 Invalid API key or expired token');
+    } else if (error.response.status === 403) {
+        console.error('🚫 Access forbidden - check permissions');
+    } else if (error.response.status === 429) {
+        console.error('🚦 Rate limit exceeded');
+    }
+}
             
             console.error('==========================================');
             return false;
