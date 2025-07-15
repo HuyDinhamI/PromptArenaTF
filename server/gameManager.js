@@ -15,7 +15,12 @@ class GameManager {
         this.scores = new Map(); // playerId -> score info
         this.aiService = new AIService();
         this.gameTimer = null;
-        
+
+        // Queue xử lý submit prompt tuần tự theo batch
+        this.promptQueue = [];
+        this.isProcessingQueue = false;
+        this.batchSize = 2; // Có thể thay đổi theo nhu cầu
+
         // Initialize AI clients
         this.initializeAI();
     }
@@ -191,7 +196,7 @@ class GameManager {
         }
     }
 
-    // Người chơi submit prompt
+    // Người chơi submit prompt (đưa vào queue)
     async submitPrompt(playerId, prompt) {
         if (this.gameState !== 'playing') {
             return { success: false, message: 'Game không trong phase nhập prompt' };
@@ -206,49 +211,88 @@ class GameManager {
             return { success: false, message: 'Bạn đã submit prompt rồi' };
         }
 
-        try {
-            console.log(`📝 ${player.name} submitted prompt: "${prompt}"`);
-            
-            // Step 1: Translate prompt to English (if enabled)
-            const translatedPrompt = await this.aiService.translateToEnglish(prompt);
-            
-            // Log translation result
-            if (config.TRANSLATION.ENABLED && translatedPrompt !== prompt) {
-                console.log(`🌐 Translation: "${prompt}" → "${translatedPrompt}"`);
+        // Đưa request vào queue
+        this.promptQueue.push({ playerId, prompt });
+        this.processPromptQueue();
+
+        return { success: true, message: 'Prompt đã được đưa vào hàng đợi xử lý!' };
+    }
+
+    // Xử lý queue tuần tự từng batch
+    async processPromptQueue() {
+        if (this.isProcessingQueue) return;
+        this.isProcessingQueue = true;
+
+        while (this.promptQueue.length > 0) {
+            // Lấy batch tiếp theo
+            const batch = this.promptQueue.splice(0, this.batchSize);
+
+            // Xử lý tuần tự từng request trong batch
+            for (const item of batch) {
+                await this.handlePromptWithRetry(item.playerId, item.prompt, 2);
             }
-            
-            // Step 2: Generate image using translated prompt
-            const generatedImageUrl = await this.aiService.generateImage(translatedPrompt);
-            
-            // Step 3: Save submission (store original prompt for display, but note translation)
-            this.submissions.set(playerId, {
-                playerId: playerId,
-                playerName: player.name,
-                playerEmail: player.email,
-                prompt: prompt, // Original prompt for display
-                translatedPrompt: translatedPrompt, // Translated prompt used for generation
-                generatedImageUrl: generatedImageUrl,
-                submittedAt: new Date()
-            });
+        }
 
-            player.status = 'submitted';
+        this.isProcessingQueue = false;
+    }
 
-            console.log(`✅ ${player.name} - Image generated: ${generatedImageUrl}`);
+    // Xử lý từng request với retry
+    async handlePromptWithRetry(playerId, prompt, maxRetry) {
+        const player = this.players.get(playerId);
+        let attempt = 0;
+        let success = false;
+        let lastError = null;
 
-            // Check nếu tất cả đã submit
-            if (this.submissions.size === this.players.size) {
-                clearTimeout(this.gameTimer);
-                this.endPromptPhase();
+        while (attempt < maxRetry && !success) {
+            try {
+                attempt++;
+                console.log(`📝 [Batch] ${player.name} submitted prompt (attempt ${attempt}): "${prompt}"`);
+
+                // Step 1: Translate prompt to English (if enabled)
+                const translatedPrompt = await this.aiService.translateToEnglish(prompt);
+
+                if (config.TRANSLATION.ENABLED && translatedPrompt !== prompt) {
+                    console.log(`🌐 Translation: "${prompt}" → "${translatedPrompt}"`);
+                }
+
+                // Step 2: Generate image using translated prompt
+                const generatedImageUrl = await this.aiService.generateImage(translatedPrompt);
+
+                // Step 3: Save submission
+                this.submissions.set(playerId, {
+                    playerId: playerId,
+                    playerName: player.name,
+                    playerEmail: player.email,
+                    prompt: prompt,
+                    translatedPrompt: translatedPrompt,
+                    generatedImageUrl: generatedImageUrl,
+                    submittedAt: new Date()
+                });
+
+                player.status = 'submitted';
+
+                console.log(`✅ [Batch] ${player.name} - Image generated: ${generatedImageUrl}`);
+                success = true;
+
+                // Check nếu tất cả đã submit
+                if (this.submissions.size === this.players.size) {
+                    clearTimeout(this.gameTimer);
+                    this.endPromptPhase();
+                }
+            } catch (error) {
+                lastError = error;
+                console.error(`❌ [Batch] Lỗi submit prompt cho ${player.name} (attempt ${attempt}):`, error.message);
+                if (attempt < maxRetry) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
             }
+        }
 
-            return { 
-                success: true, 
-                generatedImageUrl: generatedImageUrl,
-                message: 'Ảnh đã được tạo thành công!' 
-            };
-        } catch (error) {
-            console.error(`❌ Lỗi submit prompt cho ${player.name}:`, error.message);
-            return { success: false, message: 'Lỗi tạo ảnh: ' + error.message };
+        if (!success) {
+            // Nếu hết retry vẫn lỗi, trả về lỗi cho client
+            if (this.io) {
+                this.io.to(player.socketId).emit('submit-error', { message: 'Lỗi tạo ảnh: ' + (lastError ? lastError.message : 'Unknown') });
+            }
         }
     }
 
