@@ -16,10 +16,12 @@ class GameManager {
         this.aiService = new AIService();
         this.gameTimer = null;
 
-        // Queue xử lý submit prompt tuần tự theo batch
+        // Queue xử lý submit prompt song song theo batch với retry thông minh
         this.promptQueue = [];
         this.isProcessingQueue = false;
-        this.batchSize = 2; // Có thể thay đổi theo nhu cầu
+        this.batchSize = 5; // Bắt đầu với 5 người/batch
+        this.maxConcurrency = 5; // Concurrency tối đa cho mỗi batch
+        this.minConcurrency = 1; // Concurrency tối thiểu (tuần tự)
 
         // Initialize AI clients
         this.initializeAI();
@@ -218,7 +220,7 @@ class GameManager {
         return { success: true, message: 'Prompt đã được đưa vào hàng đợi xử lý!' };
     }
 
-    // Xử lý queue tuần tự từng batch
+    // Xử lý queue với batch song song và retry thông minh
     async processPromptQueue() {
         if (this.isProcessingQueue) return;
         this.isProcessingQueue = true;
@@ -226,73 +228,150 @@ class GameManager {
         while (this.promptQueue.length > 0) {
             // Lấy batch tiếp theo
             const batch = this.promptQueue.splice(0, this.batchSize);
+            console.log(`🚀 Processing batch of ${batch.length} requests`);
 
-            // Xử lý tuần tự từng request trong batch
-            for (const item of batch) {
-                await this.handlePromptWithRetry(item.playerId, item.prompt, 2);
-            }
+            // Xử lý batch với retry thông minh
+            await this.handleBatchWithRetry(batch);
         }
 
         this.isProcessingQueue = false;
     }
 
-    // Xử lý từng request với retry
-    async handlePromptWithRetry(playerId, prompt, maxRetry) {
-        const player = this.players.get(playerId);
+    // Xử lý batch với retry thông minh (giảm concurrency nếu lỗi)
+    async handleBatchWithRetry(batch) {
+        let currentConcurrency = this.maxConcurrency;
+        let maxRetry = 3; // Retry tối đa 3 lần với concurrency khác nhau
         let attempt = 0;
-        let success = false;
-        let lastError = null;
+        let remainingItems = [...batch];
 
-        while (attempt < maxRetry && !success) {
+        while (remainingItems.length > 0 && attempt < maxRetry) {
+            attempt++;
+            console.log(`📦 Batch attempt ${attempt} with concurrency ${currentConcurrency}`);
+
             try {
-                attempt++;
-                console.log(`📝 [Batch] ${player.name} submitted prompt (attempt ${attempt}): "${prompt}"`);
+                // Chia batch thành các chunk theo concurrency hiện tại
+                const results = await this.processBatchChunks(remainingItems, currentConcurrency);
+                
+                // Lọc ra các item thành công và thất bại
+                const successful = results.filter(r => r.success);
+                const failed = results.filter(r => !r.success);
 
-                // Step 1: Translate prompt to English (if enabled)
-                const translatedPrompt = await this.aiService.translateToEnglish(prompt);
+                console.log(`✅ Batch result: ${successful.length} success, ${failed.length} failed`);
 
-                if (config.TRANSLATION.ENABLED && translatedPrompt !== prompt) {
-                    console.log(`🌐 Translation: "${prompt}" → "${translatedPrompt}"`);
-                }
+                // Cập nhật remainingItems chỉ gồm các item thất bại
+                remainingItems = failed.map(r => r.item);
 
-                // Step 2: Generate image using translated prompt
-                const generatedImageUrl = await this.aiService.generateImage(translatedPrompt);
-
-                // Step 3: Save submission
-                this.submissions.set(playerId, {
-                    playerId: playerId,
-                    playerName: player.name,
-                    playerEmail: player.email,
-                    prompt: prompt,
-                    translatedPrompt: translatedPrompt,
-                    generatedImageUrl: generatedImageUrl,
-                    submittedAt: new Date()
-                });
-
-                player.status = 'submitted';
-
-                console.log(`✅ [Batch] ${player.name} - Image generated: ${generatedImageUrl}`);
-                success = true;
-
-                // Check nếu tất cả đã submit
-                if (this.submissions.size === this.players.size) {
-                    clearTimeout(this.gameTimer);
-                    this.endPromptPhase();
+                // Nếu còn item thất bại và còn lần retry, giảm concurrency
+                if (remainingItems.length > 0 && attempt < maxRetry) {
+                    currentConcurrency = Math.max(this.minConcurrency, Math.floor(currentConcurrency / 2));
+                    console.log(`⚠️ Reducing concurrency to ${currentConcurrency} for retry`);
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Đợi 2s trước retry
                 }
             } catch (error) {
-                lastError = error;
-                console.error(`❌ [Batch] Lỗi submit prompt cho ${player.name} (attempt ${attempt}):`, error.message);
+                console.error(`❌ Batch attempt ${attempt} failed completely:`, error.message);
                 if (attempt < maxRetry) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    currentConcurrency = Math.max(this.minConcurrency, Math.floor(currentConcurrency / 2));
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
             }
         }
 
-        if (!success) {
-            // Nếu hết retry vẫn lỗi, trả về lỗi cho client
-            if (this.io) {
-                this.io.to(player.socketId).emit('submit-error', { message: 'Lỗi tạo ảnh: ' + (lastError ? lastError.message : 'Unknown') });
+        // Xử lý các item còn lại thất bại sau khi hết retry
+        for (const item of remainingItems) {
+            const player = this.players.get(item.playerId);
+            if (player && this.io) {
+                this.io.to(player.socketId).emit('submit-error', { 
+                    message: 'Lỗi tạo ảnh sau nhiều lần thử lại' 
+                });
             }
+        }
+    }
+
+    // Xử lý batch theo chunks với concurrency
+    async processBatchChunks(items, concurrency) {
+        const results = [];
+        
+        // Chia items thành các chunk theo concurrency
+        for (let i = 0; i < items.length; i += concurrency) {
+            const chunk = items.slice(i, i + concurrency);
+            console.log(`🔄 Processing chunk of ${chunk.length} items`);
+
+            // Xử lý song song các item trong chunk
+            const chunkPromises = chunk.map(item => this.handleSinglePrompt(item));
+            const chunkResults = await Promise.allSettled(chunkPromises);
+
+            // Xử lý kết quả của chunk
+            for (let j = 0; j < chunk.length; j++) {
+                const result = chunkResults[j];
+                if (result.status === 'fulfilled' && result.value.success) {
+                    results.push({ success: true, item: chunk[j] });
+                } else {
+                    const error = result.status === 'rejected' ? result.reason : result.value.error;
+                    console.error(`❌ Item failed:`, error?.message || error);
+                    results.push({ success: false, item: chunk[j], error });
+                }
+            }
+
+            // Đợi giữa các chunk để tránh overload
+            if (i + concurrency < items.length) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        }
+
+        return results;
+    }
+
+    // Xử lý một prompt đơn lẻ
+    async handleSinglePrompt(item) {
+        const { playerId, prompt } = item;
+        const player = this.players.get(playerId);
+
+        try {
+            console.log(`📝 [Parallel] ${player.name} processing prompt: "${prompt}"`);
+
+            // Step 1: Translate prompt to English (if enabled)
+            const translatedPrompt = await this.aiService.translateToEnglish(prompt);
+
+            if (config.TRANSLATION.ENABLED && translatedPrompt !== prompt) {
+                console.log(`🌐 Translation: "${prompt}" → "${translatedPrompt}"`);
+            }
+
+            // Step 2: Generate image using translated prompt
+            const generatedImageUrl = await this.aiService.generateImage(translatedPrompt);
+
+            // Step 3: Save submission
+            this.submissions.set(playerId, {
+                playerId: playerId,
+                playerName: player.name,
+                playerEmail: player.email,
+                prompt: prompt,
+                translatedPrompt: translatedPrompt,
+                generatedImageUrl: generatedImageUrl,
+                submittedAt: new Date()
+            });
+
+            player.status = 'submitted';
+
+            console.log(`✅ [Parallel] ${player.name} - Image generated: ${generatedImageUrl}`);
+
+            // Emit success to client
+            if (this.io) {
+                this.io.to(player.socketId).emit('submit-success', {
+                    generatedImageUrl: generatedImageUrl,
+                    message: 'Ảnh đã được tạo thành công!'
+                });
+            }
+
+            // Check nếu tất cả đã submit
+            if (this.submissions.size === this.players.size) {
+                clearTimeout(this.gameTimer);
+                this.endPromptPhase();
+            }
+
+            return { success: true };
+        } catch (error) {
+            console.error(`❌ [Parallel] Lỗi xử lý prompt cho ${player.name}:`, error.message);
+            return { success: false, error };
         }
     }
 
