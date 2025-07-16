@@ -366,10 +366,10 @@ class GameManager {
             this.io.emit('game-status', this.getGameStatus());
         }
 
-        // Auto-kick tất cả players sau 25 giây
+        // Auto-kick tất cả players sau 40 giây
         setTimeout(() => {
             this.kickAllPlayers();
-        }, 25000);
+        }, 60000);
     }
 
     // Chấm điểm một submission

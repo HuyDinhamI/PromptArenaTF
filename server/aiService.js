@@ -364,7 +364,7 @@ if (error.response) {
                     content: [
                         {
                             type: "text",
-                            text: "Bạn sẽ được hiển thị hai hình ảnh. Hình ảnh đầu tiên là hình ảnh tham khảo (bản gốc), và hình ảnh thứ hai là hình ảnh thử nghiệm. Đánh giá mức độ giống nhau của hình ảnh thứ hai với hình ảnh đầu tiên theo tỷ lệ phần trăm (0% đến 100%). Ngoài ra, hãy giải thích ngắn gọn lý do của bạn. Trả về kết quả dưới dạng JSON với format: {\"similarity_score\": số, \"explanation\": \"giải thích\"}"
+                            text: "Bạn sẽ được hiển thị hai hình ảnh. Hình ảnh đầu tiên là hình ảnh tham khảo (bản gốc), và hình ảnh thứ hai là hình ảnh thử nghiệm. Đánh giá mức độ giống nhau của hình ảnh thứ hai với hình ảnh đầu tiên theo tỷ lệ phần trăm từ 0.0 đến 100.0 với 1 chữ số thập phân (ví dụ: 67.3, 81.7, 92.5). Tránh số tròn như 10, 20, 30. Hãy cho điểm chi tiết và chính xác. Ngoài ra, hãy giải thích ngắn gọn lý do của bạn. Trả về kết quả dưới dạng JSON với format: {\"similarity_score\": số_thập_phân, \"explanation\": \"giải thích\"}"
                         },
                         {
                             type: "image_url",
@@ -460,7 +460,7 @@ if (error.response) {
                     content: [
                         {
                             type: "text",
-                            text: "Bạn sẽ được hiển thị hai hình ảnh. Hình ảnh đầu tiên là hình ảnh tham khảo (bản gốc), và hình ảnh thứ hai là hình ảnh thử nghiệm. Đánh giá mức độ giống nhau của hình ảnh thứ hai với hình ảnh đầu tiên theo tỷ lệ phần trăm (0% đến 100%). Ngoài ra, hãy giải thích ngắn gọn lý do của bạn. Trả về kết quả dưới dạng JSON với format: {\"similarity_score\": số, \"explanation\": \"giải thích\"}"
+                            text: "Bạn sẽ được hiển thị hai hình ảnh. Hình ảnh đầu tiên là hình ảnh tham khảo (bản gốc), và hình ảnh thứ hai là hình ảnh thử nghiệm. Đánh giá mức độ giống nhau của hình ảnh thứ hai với hình ảnh đầu tiên theo tỷ lệ phần trăm từ 0.0 đến 100.0 với 1 chữ số thập phân (ví dụ: 67.3, 81.7, 92.5). Tránh số tròn như 10, 20, 30. Hãy cho điểm chi tiết và chính xác. Ngoài ra, hãy giải thích ngắn gọn lý do của bạn. Trả về kết quả dưới dạng JSON với format: {\"similarity_score\": số_thập_phân, \"explanation\": \"giải thích\"}"
                         },
                         {
                             type: "image_url",
