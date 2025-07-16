@@ -231,55 +231,30 @@ class GameManager {
         return { success: true, message: 'Prompt đã được ghi nhận!' };
     }
 
-    // Xử lý tất cả prompts đồng thời (theo mô hình test thành công)
+    // Xử lý tất cả prompts theo batch (tối đa 9/lần để tránh rate limit)
     async processAllPromptsSimultaneously() {
-        console.log(`🚀 Processing ${this.pendingPrompts.size} prompts simultaneously...`);
+        const totalPrompts = this.pendingPrompts.size;
+        const batchSize = 9; // Tối đa 9 để tránh rate limit Leonardo AI
+        
+        console.log(`🚀 Processing ${totalPrompts} prompts in batches of ${batchSize}...`);
 
-        // Chuẩn bị tất cả requests
-        const requests = [];
-        const promptInfos = [];
-
-        for (const [playerId, promptInfo] of this.pendingPrompts) {
-            promptInfos.push(promptInfo);
-
-            // Tạo promise cho từng prompt
-            const requestPromise = this.processSinglePrompt(promptInfo);
-            requests.push(requestPromise);
+        // Chuyển Map thành Array để dễ chia batch
+        const promptInfos = Array.from(this.pendingPrompts.values());
+        
+        // Chia thành các batch
+        const batches = [];
+        for (let i = 0; i < promptInfos.length; i += batchSize) {
+            batches.push(promptInfos.slice(i, i + batchSize));
         }
 
-        // Gửi tất cả requests đồng thời
-        const results = await Promise.allSettled(requests);
+        console.log(`📦 Split into ${batches.length} batches`);
 
-        // Xử lý kết quả
-        for (let i = 0; i < results.length; i++) {
-            const result = results[i];
-            const promptInfo = promptInfos[i];
-            const player = this.players.get(promptInfo.playerId);
+        // Xử lý từng batch tuần tự
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+            const batch = batches[batchIndex];
+            console.log(`\n🔄 Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} people)...`);
 
-            if (result.status === 'fulfilled' && result.value.success) {
-                // Thành công: lưu submission
-                this.submissions.set(promptInfo.playerId, result.value.submission);
-                
-                // Emit success to client
-                if (this.io && player) {
-                    this.io.to(player.socketId).emit('submit-success', {
-                        generatedImageUrl: result.value.submission.generatedImageUrl,
-                        message: 'Ảnh đã được tạo thành công!'
-                    });
-                }
-
-                console.log(`✅ ${promptInfo.playerName} - Success: ${result.value.submission.generatedImageUrl}`);
-            } else {
-                // Thất bại: thông báo lỗi
-                const error = result.status === 'rejected' ? result.reason : result.value.error;
-                console.error(`❌ ${promptInfo.playerName} - Failed:`, error?.message || error);
-
-                if (this.io && player) {
-                    this.io.to(player.socketId).emit('submit-error', {
-                        message: 'Lỗi tạo ảnh: ' + (error?.message || 'Unknown error')
-                    });
-                }
-            }
+            await this.processSingleBatch(batch, batchIndex + 1, batches.length);
         }
 
         // Clear pending prompts
@@ -287,6 +262,154 @@ class GameManager {
 
         // Chuyển sang phase chấm điểm
         this.endPromptPhase();
+    }
+
+    // Xử lý một batch (sinh ảnh song song, trả kết quả ngay khi xong)
+    async processSingleBatch(batch, batchNumber, totalBatches) {
+        console.log(`📋 Batch ${batchNumber}/${totalBatches}: Processing ${batch.length} prompts...`);
+
+        // Tạo promises cho tất cả trong batch
+        const batchPromises = batch.map((promptInfo, index) => 
+            this.processSinglePromptWithProgress(promptInfo, index + 1, batch.length, batchNumber)
+        );
+
+        // Xử lý song song trong batch
+        const results = await Promise.allSettled(batchPromises);
+
+        // Log kết quả batch
+        const successful = results.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+        const failed = results.length - successful;
+        console.log(`✅ Batch ${batchNumber} completed: ${successful} success, ${failed} failed`);
+    }
+
+    // Xử lý một prompt với thông tin progress
+    async processSinglePromptWithProgress(promptInfo, itemIndex, batchSize, batchNumber) {
+        const player = this.players.get(promptInfo.playerId);
+        
+        try {
+            console.log(`📝 [Batch ${batchNumber}][${itemIndex}/${batchSize}] Processing: ${promptInfo.playerName}`);
+
+            // Step 1: Translate prompt to English (if enabled)
+            const translatedPrompt = await this.aiService.translateToEnglish(promptInfo.prompt);
+
+            if (config.TRANSLATION.ENABLED && translatedPrompt !== promptInfo.prompt) {
+                console.log(`🌐 [${promptInfo.playerName}] Translation: "${promptInfo.prompt}" → "${translatedPrompt}"`);
+            }
+
+            // Step 2: Generate image using translated prompt
+            const generatedImageUrl = await this.aiService.generateImage(translatedPrompt);
+
+            // Step 3: Create submission
+            const submission = {
+                playerId: promptInfo.playerId,
+                playerName: promptInfo.playerName,
+                playerEmail: promptInfo.playerEmail,
+                prompt: promptInfo.prompt,
+                translatedPrompt: translatedPrompt,
+                generatedImageUrl: generatedImageUrl,
+                submittedAt: promptInfo.submittedAt
+            };
+
+            // Step 4: Lưu submission
+            this.submissions.set(promptInfo.playerId, submission);
+
+            // Step 5: Emit success to client ngay lập tức
+            if (this.io && player) {
+                this.io.to(player.socketId).emit('submit-success', {
+                    generatedImageUrl: generatedImageUrl,
+                    message: 'Ảnh đã được tạo thành công!'
+                });
+            }
+
+            // Step 6: Bắt đầu chấm điểm ngay cho người này
+            this.scoreIndividualSubmissionImmediate(promptInfo.playerId, submission);
+
+            console.log(`✅ [${promptInfo.playerName}] Image generated and scoring started`);
+            return { success: true, submission };
+
+        } catch (error) {
+            console.error(`❌ [${promptInfo.playerName}] Failed:`, error.message);
+
+            if (this.io && player) {
+                this.io.to(player.socketId).emit('submit-error', {
+                    message: 'Lỗi tạo ảnh: ' + (error?.message || 'Unknown error')
+                });
+            }
+
+            return { success: false, error };
+        }
+    }
+
+    // Chấm điểm ngay lập tức cho từng người (không đợi tất cả)
+    async scoreIndividualSubmissionImmediate(playerId, submission) {
+        try {
+            console.log(`🔍 [Immediate] Scoring ${submission.playerName}'s submission...`);
+            
+            const result = await this.aiService.compareImages(
+                this.currentReferenceImage.path,
+                submission.generatedImageUrl
+            );
+
+            const scoreData = {
+                playerId: playerId,
+                playerName: submission.playerName,
+                playerEmail: submission.playerEmail,
+                prompt: submission.prompt,
+                generatedImageUrl: submission.generatedImageUrl,
+                similarityScore: result.similarity_score,
+                explanation: result.explanation,
+                scoredAt: new Date()
+            };
+
+            this.scores.set(playerId, scoreData);
+
+            console.log(`✅ [${submission.playerName}] Scored: ${result.similarity_score}% - ${result.explanation}`);
+
+            // Emit kết quả chấm điểm cho người chơi ngay lập tức
+            const player = this.players.get(playerId);
+            if (this.io && player) {
+                this.io.to(player.socketId).emit('scoring-complete', {
+                    score: result.similarity_score,
+                    explanation: result.explanation,
+                    generatedImageUrl: submission.generatedImageUrl,
+                    message: `Điểm của bạn: ${result.similarity_score}%`
+                });
+            }
+
+            // Cập nhật trạng thái game cho host
+            if (this.io) {
+                this.io.emit('player-scored', {
+                    playerId: playerId,
+                    playerName: submission.playerName,
+                    score: result.similarity_score
+                });
+            }
+
+        } catch (error) {
+            console.error(`❌ [Immediate] Lỗi chấm điểm ${submission.playerName}:`, error.message);
+            
+            // Gán điểm 0 nếu lỗi
+            this.scores.set(playerId, {
+                playerId: playerId,
+                playerName: submission.playerName,
+                playerEmail: submission.playerEmail,
+                prompt: submission.prompt,
+                generatedImageUrl: submission.generatedImageUrl,
+                similarityScore: 0,
+                explanation: 'Lỗi chấm điểm',
+                scoredAt: new Date()
+            });
+
+            const player = this.players.get(playerId);
+            if (this.io && player) {
+                this.io.to(player.socketId).emit('scoring-complete', {
+                    score: 0,
+                    explanation: 'Lỗi chấm điểm',
+                    generatedImageUrl: submission.generatedImageUrl,
+                    message: 'Lỗi chấm điểm: 0%'
+                });
+            }
+        }
     }
 
     // Xử lý một prompt đơn lẻ
@@ -322,7 +445,7 @@ class GameManager {
         }
     }
 
-    // Kết thúc phase nhập prompt và bắt đầu chấm điểm
+    // Kết thúc phase nhập prompt và chờ tất cả chấm điểm xong
     async endPromptPhase() {
         if (this.gameState !== 'playing') return;
 
@@ -335,24 +458,31 @@ class GameManager {
             player.status = 'scoring';
         }
 
-        // Bắt đầu chấm điểm
-        await this.scoreSubmissions();
+        // Đợi tất cả người chấm điểm xong (chấm điểm đã được thực hiện trong scoreIndividualSubmissionImmediate)
+        await this.waitForAllScoringComplete();
     }
 
-    // Chấm điểm tất cả submissions
-    async scoreSubmissions() {
-        console.log('🏆 Starting scoring phase...');
-
-        const scoringPromises = [];
+    // Đợi tất cả chấm điểm hoàn thành
+    async waitForAllScoringComplete() {
+        console.log('🏆 Waiting for all scoring to complete...');
         
-        for (let [playerId, submission] of this.submissions) {
-            const promise = this.scoreIndividualSubmission(playerId, submission);
-            scoringPromises.push(promise);
-        }
+        // Đợi cho đến khi tất cả đã có điểm
+        const checkInterval = setInterval(() => {
+            if (this.scores.size === this.submissions.size) {
+                clearInterval(checkInterval);
+                this.finalizeScoringPhase();
+            }
+        }, 1000);
 
-        // Chờ tất cả việc chấm điểm hoàn thành
-        await Promise.allSettled(scoringPromises);
+        // Timeout sau 5 phút nếu vẫn chưa xong
+        setTimeout(() => {
+            clearInterval(checkInterval);
+            this.finalizeScoringPhase();
+        }, 300000);
+    }
 
+    // Hoàn thành phase chấm điểm
+    async finalizeScoringPhase() {
         // Tính toán leaderboard
         this.calculateLeaderboard();
         
@@ -361,12 +491,12 @@ class GameManager {
         
         // Emit results to all clients
         if (this.io) {
-            console.log('📡 Broadcasting results to all clients...');
+            console.log('📡 Broadcasting final results to all clients...');
             this.io.emit('results', this.getLeaderboard());
             this.io.emit('game-status', this.getGameStatus());
         }
 
-        // Auto-kick tất cả players sau 40 giây
+        // Auto-kick tất cả players sau 60 giây để xem kết quả
         setTimeout(() => {
             this.kickAllPlayers();
         }, 60000);
