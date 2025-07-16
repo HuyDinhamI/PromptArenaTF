@@ -20,7 +20,7 @@ module.exports = {
     OPENAI: {
         BASE_URL: "https://api.openai.com/v1",
         MODEL: "gpt-4o-mini",
-        MAX_TOKENS: 500
+        MAX_TOKENS: 1000
     },
     
     // Gemini Settings
@@ -32,18 +32,18 @@ module.exports = {
     
     // Scoring Configuration
     SCORING: {
-        MODEL: 'gemini', // 'openai' hoặc 'gemini' - switch ở đây
+        MODEL: 'openai', // 'openai' hoặc 'gemini' - switch ở đây
     },
     
     // Translation Configuration
     TRANSLATION: {
-        ENABLED: true, // true/false - tắt bật translation
+        ENABLED: false, // true/false - tắt bật translation
         MODEL: 'gemini'
     },
     
     // Game Settings
     GAME: {
-        MAX_PLAYERS: parseInt(process.env.MAX_PLAYERS) || 20,
+        MAX_PLAYERS: parseInt(process.env.MAX_PLAYERS) || 50,
         PROMPT_TIME_LIMIT: parseInt(process.env.PROMPT_TIME_LIMIT) || 120, // seconds
         IMAGES_FOLDER: "./images"
     }
