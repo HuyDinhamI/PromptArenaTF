@@ -103,3 +103,4 @@ config.backup.js
 memory-bank
 genImage.py
 scoring.py
+leonardo_test_log.txt
