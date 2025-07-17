@@ -46,5 +46,17 @@ module.exports = {
         MAX_PLAYERS: parseInt(process.env.MAX_PLAYERS) || 50,
         PROMPT_TIME_LIMIT: parseInt(process.env.PROMPT_TIME_LIMIT) || 120, // seconds
         IMAGES_FOLDER: "./images"
+    },
+    
+    // Tournament Settings
+    TOURNAMENT: {
+        ROUNDS: {
+            1: { name: "Vòng loại 1", maxPlayers: 50, topCount: 20 },
+            2: { name: "Vòng loại 2", maxPlayers: 20, topCount: 10 },
+            3: { name: "Bán kết", maxPlayers: 10, topCount: 5 },
+            4: { name: "Chung kết", maxPlayers: 5, topCount: 1 }
+        },
+        AUTO_KICK_DELAY: 60000, // 60s để xem kết quả trước khi kick
+        RESULT_DISPLAY_TIME: 30000 // 30s hiển thị kết quả round
     }
 };

@@ -8,7 +8,7 @@ class GameManager {
     constructor(io) {
         this.io = io; // WebSocket instance for emitting events
         this.players = new Map(); // playerId -> player info
-        this.gameState = 'waiting'; // waiting, playing, scoring, finished
+        this.gameState = 'waiting'; // waiting, tournament-active, round-playing, round-scoring, round-results, waiting-host-continue, tournament-finished
         this.currentReferenceImage = null;
         this.gameStartTime = null;
         this.submissions = new Map(); // playerId -> submission info
@@ -18,6 +18,15 @@ class GameManager {
 
         // Lưu trữ prompts để xử lý đồng thời khi tất cả đã submit
         this.pendingPrompts = new Map(); // playerId -> prompt info
+
+        // Tournament properties
+        this.currentRound = 1;
+        this.maxRounds = 4;
+        this.tournamentActive = false;
+        this.waitingForHostContinue = false;
+        this.roundResults = new Map(); // roundNumber -> results
+        this.eliminatedPlayers = new Map(); // playerId -> elimination info
+        this.usedImages = new Set(); // Track used reference images
 
         // Initialize AI clients
         this.initializeAI();
@@ -35,7 +44,12 @@ class GameManager {
     // Thêm người chơi mới
     addPlayer(socketId, playerInfo) {
         if (this.players.size >= config.GAME.MAX_PLAYERS) {
-            return { success: false, message: 'Phòng đã đầy (20/20)' };
+            return { success: false, message: 'Phòng đã đầy (50/50)' };
+        }
+
+        // Chỉ cho join khi tournament chưa bắt đầu
+        if (this.tournamentActive || this.currentRound > 1) {
+            return { success: false, message: 'Tournament đang diễn ra hoặc đã bắt đầu' };
         }
 
         if (this.gameState !== 'waiting') {
@@ -56,7 +70,15 @@ class GameManager {
             name: playerInfo.name,
             email: playerInfo.email,
             joinedAt: new Date(),
-            status: 'waiting'
+            status: 'waiting',
+            // Tournament fields
+            eliminated: false,
+            eliminatedInRound: null,
+            eliminationReason: "",
+            eliminationScore: null,
+            eliminationCutoff: null,
+            roundScores: new Map(),
+            allTimeRank: null
         });
 
         console.log(`✅ Player joined: ${playerInfo.name} (${playerInfo.email})`);
@@ -120,8 +142,8 @@ class GameManager {
         }));
     }
 
-    // Lấy ảnh ngẫu nhiên từ thư mục images
-    getRandomReferenceImage() {
+    // Lấy ảnh ngẫu nhiên từ thư mục images (không trùng với round trước)
+    getRandomReferenceImageForRound(roundNumber) {
         try {
             const imagesDir = path.resolve(config.GAME.IMAGES_FOLDER);
             if (!fs.existsSync(imagesDir)) {
@@ -132,16 +154,31 @@ class GameManager {
                 .filter(file => {
                     const ext = path.extname(file).toLowerCase();
                     return ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
-                });
+                })
+                .filter(file => !this.usedImages.has(file)); // Không dùng lại ảnh đã dùng
 
             if (imageFiles.length === 0) {
-                throw new Error('Không có ảnh nào trong thư mục images');
+                // Nếu hết ảnh mới, reset và dùng lại
+                this.usedImages.clear();
+                const allImageFiles = fs.readdirSync(imagesDir)
+                    .filter(file => {
+                        const ext = path.extname(file).toLowerCase();
+                        return ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
+                    });
+                
+                if (allImageFiles.length === 0) {
+                    throw new Error('Không có ảnh nào trong thư mục images');
+                }
+                imageFiles.push(...allImageFiles);
             }
 
             const randomImage = imageFiles[Math.floor(Math.random() * imageFiles.length)];
             const imagePath = path.join(imagesDir, randomImage);
             
-            console.log(`🎯 Selected reference image: ${randomImage}`);
+            // Đánh dấu ảnh đã dùng
+            this.usedImages.add(randomImage);
+            
+            console.log(`🎯 Round ${roundNumber} - Selected reference image: ${randomImage}`);
             return {
                 filename: randomImage,
                 path: imagePath,
@@ -151,6 +188,63 @@ class GameManager {
             console.error('❌ Lỗi lấy ảnh tham khảo:', error.message);
             throw error;
         }
+    }
+
+    // Compatibility method - dùng cho single round mode
+    getRandomReferenceImage() {
+        return this.getRandomReferenceImageForRound(this.currentRound);
+    }
+
+    // Lấy danh sách người chơi đang hoạt động (chưa bị loại)
+    getActivePlayers() {
+        return Array.from(this.players.values()).filter(player => !player.eliminated);
+    }
+
+    // Lấy danh sách người chơi đã bị loại
+    getEliminatedPlayers() {
+        return Array.from(this.eliminatedPlayers.values());
+    }
+
+    // Validate có thể bắt đầu round không
+    canStartRound(roundNumber) {
+        const roundConfig = config.TOURNAMENT.ROUNDS[roundNumber];
+        const activePlayers = this.getActivePlayers();
+        
+        if (!roundConfig) {
+            return { valid: false, message: `Round ${roundNumber} không tồn tại` };
+        }
+
+        if (activePlayers.length === 0) {
+            return { valid: false, message: 'Không có người chơi nào' };
+        }
+
+        // Có thể chơi với ít người hơn maxPlayers
+        return { 
+            valid: true, 
+            message: `Round ${roundNumber}: ${activePlayers.length} người chơi` 
+        };
+    }
+
+    // Check có thể tiếp tục round tiếp theo không
+    canAdvanceToNextRound() {
+        if (this.currentRound >= this.maxRounds) {
+            return { valid: false, message: 'Đã là round cuối' };
+        }
+
+        const nextRound = this.currentRound + 1;
+        const activePlayers = this.getActivePlayers();
+        const nextRoundConfig = config.TOURNAMENT.ROUNDS[nextRound];
+
+        if (activePlayers.length === 0) {
+            return { valid: false, message: 'Không có người chơi nào còn lại' };
+        }
+
+        return { 
+            valid: true, 
+            nextRound: nextRound,
+            playerCount: activePlayers.length,
+            roundName: nextRoundConfig.name
+        };
     }
 
     // Bắt đầu game
@@ -196,13 +290,19 @@ class GameManager {
 
     // Người chơi submit prompt (lưu vào pending, xử lý đồng thời khi đủ)
     async submitPrompt(playerId, prompt) {
-        if (this.gameState !== 'playing') {
+        // Check game state - tournament mode uses 'round-playing'
+        if (this.gameState !== 'playing' && this.gameState !== 'round-playing') {
             return { success: false, message: 'Game không trong phase nhập prompt' };
         }
 
         const player = this.players.get(playerId);
         if (!player) {
             return { success: false, message: 'Người chơi không tồn tại' };
+        }
+
+        // Check if player is eliminated in tournament
+        if (this.tournamentActive && player.eliminated) {
+            return { success: false, message: 'Bạn đã bị loại khỏi tournament' };
         }
 
         if (this.pendingPrompts.has(playerId)) {
@@ -222,8 +322,12 @@ class GameManager {
 
         player.status = 'submitted';
 
-        // Check nếu tất cả đã submit prompt, bắt đầu xử lý đồng thời
-        if (this.pendingPrompts.size === this.players.size) {
+        // Check nếu tất cả active players đã submit prompt
+        const expectedPlayerCount = this.tournamentActive 
+            ? this.getActivePlayers().length 
+            : this.players.size;
+            
+        if (this.pendingPrompts.size === expectedPlayerCount) {
             clearTimeout(this.gameTimer);
             await this.processAllPromptsSimultaneously();
         }
@@ -486,20 +590,75 @@ class GameManager {
         // Tính toán leaderboard
         this.calculateLeaderboard();
         
-        this.gameState = 'finished';
         console.log('🎉 Scoring completed!');
         
-        // Emit results to all clients
+        // Check if tournament mode or single game mode
+        if (this.tournamentActive) {
+            // Tournament mode: Handle round completion
+            await this.handleRoundCompletion();
+        } else {
+            // Single game mode: Original behavior
+            this.gameState = 'finished';
+            
+            // Emit results to all clients
+            if (this.io) {
+                console.log('📡 Broadcasting final results to all clients...');
+                this.io.emit('results', this.getLeaderboard());
+                this.io.emit('game-status', this.getGameStatus());
+            }
+
+            // Auto-kick tất cả players sau 60 giây để xem kết quả
+            setTimeout(() => {
+                this.kickAllPlayers();
+            }, 60000);
+        }
+    }
+
+    // Handle tournament round completion
+    async handleRoundCompletion() {
+        this.gameState = 'round-results';
+        
+        console.log(`🏁 Round ${this.currentRound} completed`);
+        
+        // Emit round scoring complete
         if (this.io) {
-            console.log('📡 Broadcasting final results to all clients...');
-            this.io.emit('results', this.getLeaderboard());
-            this.io.emit('game-status', this.getGameStatus());
+            this.io.emit('round-scoring-complete', {
+                round: this.currentRound,
+                roundName: config.TOURNAMENT.ROUNDS[this.currentRound].name,
+                leaderboard: this.getLeaderboard()
+            });
         }
 
-        // Auto-kick tất cả players sau 60 giây để xem kết quả
-        setTimeout(() => {
-            this.kickAllPlayers();
-        }, 60000);
+        // Wait a moment for players to see results
+        setTimeout(async () => {
+            // Eliminate players and advance
+            await this.eliminatePlayersAfterRound();
+            
+            // Check if tournament should continue or end
+            if (this.currentRound >= this.maxRounds) {
+                // Tournament finished
+                await this.endTournament();
+            } else {
+                // Wait for host to continue to next round
+                this.gameState = 'waiting-host-continue';
+                this.waitingForHostContinue = true;
+                
+                const canAdvance = this.canAdvanceToNextRound();
+                
+                if (this.io) {
+                    this.io.emit('waiting-for-host', {
+                        message: `Round ${this.currentRound} hoàn thành. Host có thể tiếp tục round tiếp theo.`,
+                        currentRound: this.currentRound,
+                        nextRound: canAdvance.valid ? canAdvance.nextRound : null,
+                        nextRoundName: canAdvance.valid ? canAdvance.roundName : null,
+                        currentPlayers: this.getActivePlayers().length,
+                        canContinue: canAdvance.valid
+                    });
+                }
+                
+                console.log(`⏸️ Waiting for host to continue to Round ${canAdvance.valid ? canAdvance.nextRound : 'N/A'}`);
+            }
+        }, config.TOURNAMENT.RESULT_DISPLAY_TIME);
     }
 
     // Chấm điểm một submission
@@ -577,9 +736,402 @@ class GameManager {
         return { success: true, message: 'Game đã được reset' };
     }
 
-    // Lấy thông tin trạng thái game
-    getGameStatus() {
+    // =============== TOURNAMENT METHODS ===============
+
+    // Bắt đầu tournament
+    startTournament() {
+        if (this.tournamentActive) {
+            return { success: false, message: 'Tournament đã bắt đầu rồi' };
+        }
+
+        if (this.players.size === 0) {
+            return { success: false, message: 'Không có người chơi nào' };
+        }
+
+        // Reset tournament state
+        this.currentRound = 1;
+        this.tournamentActive = true;
+        this.waitingForHostContinue = false;
+        this.roundResults.clear();
+        this.eliminatedPlayers.clear();
+        this.usedImages.clear();
+
+        console.log(`🏆 Tournament started with ${this.players.size} players`);
+        
+        // Bắt đầu Round 1
+        const result = this.startRound(1);
+        
+        if (result.success) {
+            // Emit tournament started event
+            if (this.io) {
+                this.io.emit('tournament-started', {
+                    totalRounds: this.maxRounds,
+                    currentRound: this.currentRound,
+                    totalPlayers: this.players.size
+                });
+            }
+        }
+
+        return result;
+    }
+
+    // Bắt đầu một round cụ thể
+    startRound(roundNumber) {
+        const validation = this.canStartRound(roundNumber);
+        if (!validation.valid) {
+            return { success: false, message: validation.message };
+        }
+
+        const roundConfig = config.TOURNAMENT.ROUNDS[roundNumber];
+        const activePlayers = this.getActivePlayers();
+
+        try {
+            // Set current round
+            this.currentRound = roundNumber;
+            this.gameState = 'round-playing';
+            this.waitingForHostContinue = false;
+
+            // Get new reference image for this round
+            this.currentReferenceImage = this.getRandomReferenceImageForRound(roundNumber);
+            this.gameStartTime = new Date();
+            
+            // Clear previous round data
+            this.submissions.clear();
+            this.scores.clear();
+            this.pendingPrompts.clear();
+
+            // Update player status
+            activePlayers.forEach(player => {
+                player.status = 'round-playing';
+            });
+
+            // Set timer cho round
+            this.gameTimer = setTimeout(() => {
+                this.endPromptPhase();
+            }, config.GAME.PROMPT_TIME_LIMIT * 1000);
+
+            console.log(`🚀 Round ${roundNumber} (${roundConfig.name}) started with ${activePlayers.length} players`);
+            console.log(`🎯 Round ${roundNumber} reference image: ${this.currentReferenceImage.filename}`);
+
+            // Emit round started event
+            if (this.io) {
+                this.io.emit('round-started', {
+                    round: roundNumber,
+                    roundName: roundConfig.name,
+                    participantCount: activePlayers.length,
+                    topCount: roundConfig.topCount,
+                    referenceImage: this.currentReferenceImage,
+                    timeLimit: config.GAME.PROMPT_TIME_LIMIT
+                });
+            }
+
+            return { 
+                success: true, 
+                round: roundNumber,
+                roundName: roundConfig.name,
+                participants: activePlayers.length,
+                referenceImage: this.currentReferenceImage,
+                timeLimit: config.GAME.PROMPT_TIME_LIMIT
+            };
+
+        } catch (error) {
+            console.error(`❌ Lỗi bắt đầu Round ${roundNumber}:`, error.message);
+            return { success: false, message: error.message };
+        }
+    }
+
+    // Host tiếp tục sang round tiếp theo
+    hostContinueRound() {
+        if (!this.waitingForHostContinue) {
+            return { success: false, message: 'Không trong trạng thái chờ host continue' };
+        }
+
+        const canAdvance = this.canAdvanceToNextRound();
+        if (!canAdvance.valid) {
+            return { success: false, message: canAdvance.message };
+        }
+
+        console.log(`🎮 Host continuing to Round ${canAdvance.nextRound}`);
+        
+        // Bắt đầu round tiếp theo
+        return this.startRound(canAdvance.nextRound);
+    }
+
+    // Tính toán xếp hạng round với tie-breaking
+    calculateRoundRanking() {
+        const submissions = Array.from(this.submissions.values());
+        const scores = Array.from(this.scores.values());
+        
+        // Combine submission data với scores
+        const playersWithScores = scores.map(scoreData => {
+            const submission = submissions.find(sub => sub.playerId === scoreData.playerId);
+            return {
+                playerId: scoreData.playerId,
+                playerName: scoreData.playerName,
+                playerEmail: scoreData.playerEmail,
+                score: scoreData.similarityScore,
+                explanation: scoreData.explanation,
+                submittedAt: submission?.submittedAt || new Date(),
+                prompt: scoreData.prompt,
+                generatedImageUrl: scoreData.generatedImageUrl
+            };
+        });
+
+        // Sắp xếp: Score cao trước, submit time sớm trước (tie-breaking)
+        const ranking = playersWithScores.sort((a, b) => {
+            if (b.score !== a.score) {
+                return b.score - a.score; // Score cao hơn = rank tốt hơn
+            }
+            return a.submittedAt - b.submittedAt; // Submit sớm hơn = rank tốt hơn
+        });
+
+        // Thêm rank number
+        ranking.forEach((player, index) => {
+            player.rank = index + 1;
+        });
+
+        console.log(`📊 Round ${this.currentRound} ranking calculated:`, 
+            ranking.slice(0, 5).map(p => `${p.rank}. ${p.playerName}: ${p.score}%`)
+        );
+
+        return ranking;
+    }
+
+    // Loại bỏ players sau round
+    async eliminatePlayersAfterRound() {
+        const ranking = this.calculateRoundRanking();
+        const roundConfig = config.TOURNAMENT.ROUNDS[this.currentRound];
+        const survivorCount = roundConfig.topCount;
+        
+        // Top players được giữ lại
+        const survivors = ranking.slice(0, survivorCount);
+        
+        // Những người bị loại
+        const eliminated = ranking.slice(survivorCount);
+        
+        // Cutoff score là điểm của người cuối cùng được giữ lại
+        const cutoffScore = survivors.length > 0 ? survivors[survivors.length - 1].score : 0;
+
+        console.log(`🔥 Round ${this.currentRound}: Eliminating ${eliminated.length} players, keeping ${survivors.length}`);
+        console.log(`📊 Cutoff score: ${cutoffScore}%`);
+
+        // Kick những người bị loại ngay lập tức
+        for (const eliminatedPlayer of eliminated) {
+            await this.kickPlayerImmediately(eliminatedPlayer.playerId, {
+                round: this.currentRound,
+                roundName: roundConfig.name,
+                reason: `Không đạt top ${survivorCount}`,
+                score: eliminatedPlayer.score,
+                rank: eliminatedPlayer.rank,
+                cutoffScore: cutoffScore
+            });
+        }
+
+        // Lưu kết quả round
+        this.roundResults.set(this.currentRound, {
+            roundNumber: this.currentRound,
+            roundName: roundConfig.name,
+            totalParticipants: ranking.length,
+            survivors: survivors.length,
+            eliminated: eliminated.length,
+            cutoffScore: cutoffScore,
+            ranking: ranking
+        });
+
+        // Emit round results
+        if (this.io) {
+            this.io.emit('round-results', {
+                round: this.currentRound,
+                roundName: roundConfig.name,
+                ranking: ranking,
+                survivors: survivors.length,
+                eliminated: eliminated.length,
+                cutoffScore: cutoffScore
+            });
+        }
+
         return {
+            survivors: survivors.length,
+            eliminated: eliminated.length,
+            cutoffScore: cutoffScore
+        };
+    }
+
+    // Kick người chơi ngay lập tức với thông tin chi tiết
+    async kickPlayerImmediately(playerId, eliminationInfo) {
+        const player = this.players.get(playerId);
+        
+        if (!player) {
+            console.log(`⚠️ Player ${playerId} not found for elimination`);
+            return;
+        }
+
+        console.log(`🚪 Eliminating ${player.name}: Round ${eliminationInfo.round}, Rank ${eliminationInfo.rank}, Score ${eliminationInfo.score}%`);
+
+        // 1. Mark player as eliminated
+        player.eliminated = true;
+        player.eliminatedInRound = eliminationInfo.round;
+        player.eliminationReason = eliminationInfo.reason;
+        player.eliminationScore = eliminationInfo.score;
+        player.eliminationCutoff = eliminationInfo.cutoffScore;
+
+        // 2. Save round score
+        player.roundScores.set(eliminationInfo.round, {
+            score: eliminationInfo.score,
+            rank: eliminationInfo.rank,
+            advanced: false,
+            eliminated: true
+        });
+
+        // 3. Send elimination notification
+        if (this.io) {
+            this.io.to(player.socketId).emit('eliminated', {
+                round: eliminationInfo.round,
+                roundName: eliminationInfo.roundName,
+                reason: eliminationInfo.reason,
+                yourScore: eliminationInfo.score,
+                yourRank: eliminationInfo.rank,
+                cutoffScore: eliminationInfo.cutoffScore,
+                totalParticipants: this.getActivePlayers().length + 1,
+                message: `Bạn bị loại ở ${eliminationInfo.roundName}. Điểm: ${eliminationInfo.score}% (Rank ${eliminationInfo.rank}). Cảm ơn bạn đã chơi!`
+            });
+
+            // Delay một chút để message được gửi
+            setTimeout(() => {
+                // 4. Disconnect player
+                const socket = Array.from(this.io.sockets.sockets.values())
+                    .find(s => s.id === player.socketId);
+                if (socket) {
+                    socket.disconnect();
+                }
+            }, 2000);
+        }
+
+        // 5. Move to eliminated players
+        this.eliminatedPlayers.set(playerId, {
+            ...player,
+            eliminatedAt: new Date(),
+            eliminationInfo: eliminationInfo
+        });
+
+        // 6. Remove from active players
+        this.players.delete(playerId);
+        this.submissions.delete(playerId);
+        this.scores.delete(playerId);
+        this.pendingPrompts.delete(playerId);
+
+        console.log(`✅ ${player.name} eliminated and disconnected`);
+    }
+
+    // Kết thúc tournament
+    async endTournament() {
+        console.log('🏆 Tournament ended!');
+        
+        const finalRanking = this.calculateFinalRanking();
+        const winner = finalRanking.length > 0 ? finalRanking[0] : null;
+
+        this.gameState = 'tournament-finished';
+        this.tournamentActive = false;
+
+        // Emit final results
+        if (this.io) {
+            this.io.emit('tournament-finished', {
+                winner: winner,
+                finalRanking: finalRanking,
+                allRoundResults: Array.from(this.roundResults.values()),
+                totalRounds: this.currentRound
+            });
+        }
+
+        console.log(`🥇 Tournament Winner: ${winner ? winner.playerName : 'No winner'}`);
+
+        // Auto-kick remaining players sau delay
+        setTimeout(() => {
+            this.kickAllPlayers();
+        }, config.TOURNAMENT.AUTO_KICK_DELAY);
+    }
+
+    // Tính final ranking cho tournament
+    calculateFinalRanking() {
+        // Lấy current round ranking làm final ranking
+        const currentRanking = this.calculateRoundRanking();
+        
+        return currentRanking.map((player, index) => ({
+            ...player,
+            finalRank: index + 1,
+            tournamentWinner: index === 0
+        }));
+    }
+
+    // Reset tournament hoàn toàn
+    resetTournament() {
+        console.log('🔄 Resetting tournament...');
+        
+        clearTimeout(this.gameTimer);
+        
+        // Reset tournament state
+        this.currentRound = 1;
+        this.tournamentActive = false;
+        this.waitingForHostContinue = false;
+        this.roundResults.clear();
+        this.eliminatedPlayers.clear();
+        this.usedImages.clear();
+        
+        // Reset game state
+        this.players.clear();
+        this.submissions.clear();
+        this.scores.clear();
+        this.pendingPrompts.clear();
+        this.gameState = 'waiting';
+        this.currentReferenceImage = null;
+        this.gameStartTime = null;
+        this.leaderboard = null;
+        this.gameTimer = null;
+        
+        console.log('✅ Tournament reset complete');
+        return { success: true, message: 'Tournament đã được reset' };
+    }
+
+    // Host eliminate player cụ thể
+    hostEliminatePlayer(playerId) {
+        const player = this.players.get(playerId);
+        if (!player) {
+            return { success: false, message: 'Người chơi không tồn tại' };
+        }
+
+        console.log(`🎮 Host eliminating ${player.name}`);
+        
+        this.kickPlayerImmediately(playerId, {
+            round: this.currentRound,
+            roundName: config.TOURNAMENT.ROUNDS[this.currentRound]?.name || `Round ${this.currentRound}`,
+            reason: 'Bị host loại',
+            score: 0,
+            rank: 'N/A',
+            cutoffScore: 'N/A'
+        });
+
+        return { success: true, message: `${player.name} đã bị loại` };
+    }
+
+    // Lấy thông tin trạng thái tournament
+    getTournamentStatus() {
+        return {
+            tournamentActive: this.tournamentActive,
+            currentRound: this.currentRound,
+            maxRounds: this.maxRounds,
+            waitingForHostContinue: this.waitingForHostContinue,
+            activePlayers: this.getActivePlayers().length,
+            eliminatedPlayers: this.eliminatedPlayers.size,
+            canAdvanceToNextRound: this.canAdvanceToNextRound(),
+            roundResults: Array.from(this.roundResults.values())
+        };
+    }
+
+    // =============== END TOURNAMENT METHODS ===============
+
+    // Lấy thông tin trạng thái game (updated với tournament info)
+    getGameStatus() {
+        const baseStatus = {
             state: this.gameState,
             playersCount: this.players.size,
             maxPlayers: config.GAME.MAX_PLAYERS,
@@ -589,6 +1141,16 @@ class GameManager {
             submissionsCount: this.submissions.size,
             leaderboard: this.getLeaderboard()
         };
+
+        // Thêm tournament info
+        if (this.tournamentActive) {
+            return {
+                ...baseStatus,
+                tournament: this.getTournamentStatus()
+            };
+        }
+
+        return baseStatus;
     }
 }
 

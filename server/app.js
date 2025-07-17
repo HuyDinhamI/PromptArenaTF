@@ -201,6 +201,80 @@ io.on('connection', (socket) => {
         io.emit('players-updated', gameManager.getPlayersList());
     });
 
+    // ============ TOURNAMENT EVENT HANDLERS ============
+
+    // Host start tournament
+    socket.on('start-tournament', async () => {
+        console.log(`🏆 Start tournament request from ${socket.id}`);
+        
+        const result = gameManager.startTournament();
+        
+        if (result.success) {
+            console.log('📢 Tournament started broadcast sent to all clients');
+        } else {
+            socket.emit('start-tournament-error', { message: result.message });
+        }
+    });
+
+    // Host continue to next round
+    socket.on('host-continue-round', () => {
+        console.log(`▶️ Host continue round request from ${socket.id}`);
+        
+        const result = gameManager.hostContinueRound();
+        
+        if (result.success) {
+            console.log(`📢 Round ${result.round} started`);
+        } else {
+            socket.emit('continue-round-error', { message: result.message });
+        }
+    });
+
+    // Host eliminate specific player
+    socket.on('host-eliminate-player', (data) => {
+        console.log(`🚫 Host eliminate player request: ${data.playerId}`);
+        
+        const result = gameManager.hostEliminatePlayer(data.playerId);
+        
+        if (result.success) {
+            // Update all clients
+            io.emit('players-updated', gameManager.getPlayersList());
+            io.emit('game-status', gameManager.getGameStatus());
+        } else {
+            socket.emit('eliminate-player-error', { message: result.message });
+        }
+    });
+
+    // Host reset tournament
+    socket.on('reset-tournament', () => {
+        console.log(`🔄 Reset tournament request from ${socket.id}`);
+        
+        const result = gameManager.resetTournament();
+        
+        // Disconnect all players
+        const clientSockets = io.sockets.sockets;
+        for (let [socketId, clientSocket] of clientSockets) {
+            if (clientSocket.playerId) {
+                clientSocket.emit('tournament-reset', { message: 'Tournament đã được reset' });
+                clientSocket.disconnect();
+            }
+        }
+        
+        // Broadcast reset to hosts
+        io.emit('game-status', gameManager.getGameStatus());
+        io.emit('players-updated', gameManager.getPlayersList());
+    });
+
+    // Get tournament status
+    socket.on('get-tournament-status', () => {
+        if (gameManager.tournamentActive) {
+            socket.emit('tournament-status', gameManager.getTournamentStatus());
+        } else {
+            socket.emit('tournament-status', { tournamentActive: false });
+        }
+    });
+
+    // ============ END TOURNAMENT EVENT HANDLERS ============
+
     // Client disconnect
     socket.on('disconnect', () => {
         console.log(`❌ Client disconnected: ${socket.id}`);
