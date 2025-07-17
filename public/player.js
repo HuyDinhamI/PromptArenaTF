@@ -93,6 +93,33 @@ class PlayerGame {
             this.startGame(data);
         });
 
+        // Tournament events
+        this.socket.on('tournament-started', (data) => {
+            this.showMessage(`🏆 Tournament bắt đầu với ${data.totalPlayers} người chơi!`, 'info');
+        });
+
+        this.socket.on('round-started', (data) => {
+            this.showMessage(`🚀 ${data.roundName} bắt đầu!`, 'info');
+            this.startGame(data);
+        });
+
+        this.socket.on('eliminated', (data) => {
+            this.handleElimination(data);
+        });
+
+        this.socket.on('waiting-for-host', (data) => {
+            this.showWaitingForHost(data);
+        });
+
+        this.socket.on('tournament-finished', (data) => {
+            this.showMessage(`🎉 Tournament kết thúc! Chúc mừng ${data.winner?.playerName}!`, 'success');
+            this.showResults(data.finalRanking);
+        });
+
+        this.socket.on('round-results', (data) => {
+            this.showMessage(`📊 ${data.roundName} kết thúc: ${data.survivors} người tiếp tục, ${data.eliminated} người bị loại`, 'info');
+        });
+
         this.socket.on('submit-success', (data) => {
             this.handleSubmitSuccess(data);
         });
@@ -368,6 +395,60 @@ class PlayerGame {
         
         // Scroll to show message
         messageEl.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // ========== TOURNAMENT METHODS ==========
+
+    handleElimination(data) {
+        this.showMessage(`😢 ${data.message}`, 'error');
+        
+        // Show elimination details
+        setTimeout(() => {
+            this.showMessage(`📊 Điểm của bạn: ${data.yourScore}% (Rank ${data.yourRank}/${data.totalParticipants})`, 'info');
+            this.showMessage(`🎯 Điểm cần thiết: ${data.cutoffScore}%`, 'info');
+        }, 2000);
+        
+        // Auto redirect after showing elimination info
+        setTimeout(() => {
+            this.resetToJoin();
+        }, 8000);
+    }
+
+    showWaitingForHost(data) {
+        this.hideAllSections();
+        this.waitingSection.classList.remove('hidden');
+        
+        // Update waiting room message for tournament
+        const waitingMessage = document.createElement('div');
+        waitingMessage.className = 'card';
+        waitingMessage.innerHTML = `
+            <h2>🏆 Chúc mừng! Bạn đã vượt qua ${data.currentRound > 1 ? 'Round ' + (data.currentRound - 1) : 'vòng trước'}!</h2>
+            <p>${data.message}</p>
+            <div style="margin: 20px 0;">
+                <strong>👥 Người chơi còn lại: ${data.currentPlayers}</strong>
+            </div>
+            ${data.nextRoundName ? `<p>⏳ Chờ host bắt đầu <strong>${data.nextRoundName}</strong></p>` : ''}
+        `;
+        
+        // Replace waiting room content temporarily
+        const originalContent = this.waitingSection.innerHTML;
+        this.waitingSection.innerHTML = '';
+        this.waitingSection.appendChild(waitingMessage);
+        
+        // Add players grid back
+        const playersCard = document.createElement('div');
+        playersCard.className = 'card';
+        playersCard.innerHTML = `
+            <h2>👥 Người chơi còn lại (<span id="playerCount">${data.currentPlayers}</span> người)</h2>
+            <div class="players-grid" id="playersGrid"></div>
+        `;
+        this.waitingSection.appendChild(playersCard);
+        
+        // Update references to new elements
+        this.playerCount = document.getElementById('playerCount');
+        this.playersGrid = document.getElementById('playersGrid');
+        
+        this.showMessage('🎉 Bạn đã vượt qua vòng này! Chờ host tiếp tục...', 'success');
     }
 }
 
