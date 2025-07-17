@@ -142,7 +142,7 @@ class GameManager {
         }));
     }
 
-    // Lấy ảnh ngẫu nhiên từ thư mục images (không trùng với round trước)
+    // Lấy ảnh cố định cho từng round
     getRandomReferenceImageForRound(roundNumber) {
         try {
             const imagesDir = path.resolve(config.GAME.IMAGES_FOLDER);
@@ -150,16 +150,54 @@ class GameManager {
                 throw new Error(`Thư mục images không tồn tại: ${imagesDir}`);
             }
 
+            // Mapping round với tên file ảnh cố định
+            const roundImageMapping = {
+                1: 'round1.jpg',
+                2: 'round2.jpeg', 
+                3: 'round3.jpeg',
+                4: 'round4.jpeg'
+            };
+
+            const targetImageFile = roundImageMapping[roundNumber];
+            
+            if (!targetImageFile) {
+                throw new Error(`Không có ảnh cho round ${roundNumber}`);
+            }
+
+            const imagePath = path.join(imagesDir, targetImageFile);
+            
+            // Kiểm tra file có tồn tại không
+            if (!fs.existsSync(imagePath)) {
+                console.warn(`⚠️ Ảnh ${targetImageFile} không tồn tại, fallback to random image`);
+                return this.getFallbackRandomImage(roundNumber);
+            }
+            
+            console.log(`🎯 Round ${roundNumber} - Using dedicated image: ${targetImageFile}`);
+            return {
+                filename: targetImageFile,
+                path: imagePath,
+                url: `/images/${targetImageFile}`
+            };
+        } catch (error) {
+            console.error('❌ Lỗi lấy ảnh tham khảo:', error.message);
+            // Fallback to random image if specific round image fails
+            return this.getFallbackRandomImage(roundNumber);
+        }
+    }
+
+    // Fallback method: lấy ảnh ngẫu nhiên khi không có ảnh cố định
+    getFallbackRandomImage(roundNumber) {
+        try {
+            const imagesDir = path.resolve(config.GAME.IMAGES_FOLDER);
             const imageFiles = fs.readdirSync(imagesDir)
                 .filter(file => {
                     const ext = path.extname(file).toLowerCase();
                     return ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
                 })
-                .filter(file => !this.usedImages.has(file)); // Không dùng lại ảnh đã dùng
+                .filter(file => !file.startsWith('round')); // Exclude round-specific images
 
             if (imageFiles.length === 0) {
-                // Nếu hết ảnh mới, reset và dùng lại
-                this.usedImages.clear();
+                // If no other images, use any available image
                 const allImageFiles = fs.readdirSync(imagesDir)
                     .filter(file => {
                         const ext = path.extname(file).toLowerCase();
@@ -175,17 +213,14 @@ class GameManager {
             const randomImage = imageFiles[Math.floor(Math.random() * imageFiles.length)];
             const imagePath = path.join(imagesDir, randomImage);
             
-            // Đánh dấu ảnh đã dùng
-            this.usedImages.add(randomImage);
-            
-            console.log(`🎯 Round ${roundNumber} - Selected reference image: ${randomImage}`);
+            console.log(`🎯 Round ${roundNumber} - Fallback to random image: ${randomImage}`);
             return {
                 filename: randomImage,
                 path: imagePath,
                 url: `/images/${randomImage}`
             };
         } catch (error) {
-            console.error('❌ Lỗi lấy ảnh tham khảo:', error.message);
+            console.error('❌ Lỗi lấy ảnh fallback:', error.message);
             throw error;
         }
     }
