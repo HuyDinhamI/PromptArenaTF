@@ -37,11 +37,20 @@
                 <button id="startBtn" class="btn btn-success" disabled>
                     🚀 Bắt đầu game
                 </button>
+                <button id="startTournamentBtn" class="btn btn-tournament" disabled>
+                    🏆 Bắt đầu Tournament
+                </button>
+                <button id="continueRoundBtn" class="btn btn-continue hidden" disabled>
+                    ▶️ Tiếp tục Round tiếp theo
+                </button>
                 <button id="kickAllBtn" class="btn btn-warning">
                     👥 Kick tất cả
                 </button>
                 <button id="resetBtn" class="btn btn-danger">
                     🔄 Reset game
+                </button>
+                <button id="resetTournamentBtn" class="btn btn-danger hidden">
+                    🔄 Reset Tournament
                 </button>
                 <button id="refreshBtn" class="btn btn-primary">
                     🔃 Làm mới
@@ -64,6 +73,27 @@
             <div class="players-grid" id="playersGrid">
                 <div style="text-align: center; color: #666; grid-column: 1/-1;">
                     Chưa có người chơi nào
+                </div>
+            </div>
+        </div>
+
+        <!-- Tournament Progress -->
+        <div id="tournamentCard" class="card hidden">
+            <h2>🏆 Tournament Progress</h2>
+            <div id="tournamentInfo">
+                <div style="margin: 10px 0;">
+                    <strong>Round hiện tại:</strong> 
+                    <span id="currentRound">1</span>/<span id="totalRounds">4</span>
+                    - <span id="roundName">Vòng loại 1</span>
+                </div>
+                <div style="margin: 10px 0;">
+                    <strong>Người chơi còn lại:</strong> 
+                    <span id="activePlayers">0</span> 
+                    (<span id="eliminatedPlayers">0</span> đã bị loại)
+                </div>
+                <div style="margin: 10px 0;">
+                    <strong>Trạng thái:</strong> 
+                    <span id="tournamentStatus">-</span>
                 </div>
             </div>
         </div>

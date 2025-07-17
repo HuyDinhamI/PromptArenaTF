@@ -23,17 +23,29 @@ class HostDashboard {
         
         // Control buttons
         this.startBtn = document.getElementById('startBtn');
+        this.startTournamentBtn = document.getElementById('startTournamentBtn');
+        this.continueRoundBtn = document.getElementById('continueRoundBtn');
         this.kickAllBtn = document.getElementById('kickAllBtn');
         this.resetBtn = document.getElementById('resetBtn');
+        this.resetTournamentBtn = document.getElementById('resetTournamentBtn');
         this.refreshBtn = document.getElementById('refreshBtn');
         
         // Cards
         this.imageCard = document.getElementById('imageCard');
+        this.tournamentCard = document.getElementById('tournamentCard');
         this.progressCard = document.getElementById('progressCard');
         this.leaderboardCard = document.getElementById('leaderboardCard');
         
         // Players
         this.playersGrid = document.getElementById('playersGrid');
+        
+        // Tournament elements
+        this.currentRound = document.getElementById('currentRound');
+        this.totalRounds = document.getElementById('totalRounds');
+        this.roundName = document.getElementById('roundName');
+        this.activePlayers = document.getElementById('activePlayers');
+        this.eliminatedPlayers = document.getElementById('eliminatedPlayers');
+        this.tournamentStatus = document.getElementById('tournamentStatus');
         
         // Game info
         this.currentReferenceImg = document.getElementById('currentReferenceImg');
@@ -52,6 +64,14 @@ class HostDashboard {
             this.startGame();
         });
 
+        this.startTournamentBtn.addEventListener('click', () => {
+            this.startTournament();
+        });
+
+        this.continueRoundBtn.addEventListener('click', () => {
+            this.continueRound();
+        });
+
         this.kickAllBtn.addEventListener('click', () => {
             if (confirm('Bạn có chắc muốn kick tất cả người chơi?')) {
                 this.kickAllPlayers();
@@ -61,6 +81,12 @@ class HostDashboard {
         this.resetBtn.addEventListener('click', () => {
             if (confirm('Bạn có chắc muốn reset game? Tất cả dữ liệu sẽ bị xóa.')) {
                 this.resetGame();
+            }
+        });
+
+        this.resetTournamentBtn.addEventListener('click', () => {
+            if (confirm('Bạn có chắc muốn reset tournament? Tất cả dữ liệu sẽ bị xóa.')) {
+                this.resetTournament();
             }
         });
 
@@ -95,6 +121,39 @@ class HostDashboard {
         });
 
         this.socket.on('start-game-error', (data) => {
+            this.showMessage(data.message, 'error');
+        });
+
+        // Tournament events
+        this.socket.on('tournament-started', (data) => {
+            this.handleTournamentStarted(data);
+        });
+
+        this.socket.on('round-started', (data) => {
+            this.handleRoundStarted(data);
+        });
+
+        this.socket.on('round-scoring-complete', (data) => {
+            this.handleRoundScoringComplete(data);
+        });
+
+        this.socket.on('waiting-for-host', (data) => {
+            this.handleWaitingForHost(data);
+        });
+
+        this.socket.on('round-results', (data) => {
+            this.handleRoundResults(data);
+        });
+
+        this.socket.on('tournament-finished', (data) => {
+            this.handleTournamentFinished(data);
+        });
+
+        this.socket.on('start-tournament-error', (data) => {
+            this.showMessage(data.message, 'error');
+        });
+
+        this.socket.on('continue-round-error', (data) => {
             this.showMessage(data.message, 'error');
         });
     }
@@ -142,6 +201,9 @@ class HostDashboard {
 
         // Update start button
         this.updateStartButton(players.length);
+        
+        // Update tournament button
+        this.updateTournamentButtons(players.length);
     }
 
     updateStartButton(playerCount) {
@@ -321,6 +383,149 @@ class HostDashboard {
         
         // Scroll to show message
         messageEl.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // ========== TOURNAMENT METHODS ==========
+
+    startTournament() {
+        this.startTournamentBtn.disabled = true;
+        this.startTournamentBtn.textContent = '🔄 Đang bắt đầu Tournament...';
+        
+        this.socket.emit('start-tournament');
+    }
+
+    continueRound() {
+        this.continueRoundBtn.disabled = true;
+        this.continueRoundBtn.textContent = '🔄 Đang tiếp tục...';
+        
+        this.socket.emit('host-continue-round');
+    }
+
+    resetTournament() {
+        this.socket.emit('reset-tournament');
+        this.showMessage('Đã gửi lệnh reset tournament', 'info');
+    }
+
+    handleTournamentStarted(data) {
+        this.showMessage(`🏆 Tournament đã bắt đầu với ${data.totalPlayers} người chơi!`, 'success');
+        
+        // Show tournament card
+        this.tournamentCard.classList.remove('hidden');
+        this.totalRounds.textContent = data.totalRounds;
+        this.currentRound.textContent = data.currentRound;
+        
+        // Hide single game controls, show tournament controls
+        this.startBtn.classList.add('hidden');
+        this.startTournamentBtn.classList.add('hidden');
+        this.resetBtn.classList.add('hidden');
+        this.resetTournamentBtn.classList.remove('hidden');
+    }
+
+    handleRoundStarted(data) {
+        this.showMessage(`🚀 ${data.roundName} đã bắt đầu với ${data.participantCount} người chơi!`, 'info');
+        
+        // Update tournament info
+        this.currentRound.textContent = data.round;
+        this.roundName.textContent = data.roundName;
+        this.activePlayers.textContent = data.participantCount;
+        this.tournamentStatus.textContent = `Đang chơi ${data.roundName}`;
+        
+        // Show reference image
+        this.imageCard.classList.remove('hidden');
+        this.currentReferenceImg.src = data.referenceImage.url;
+        this.imageName.textContent = data.referenceImage.filename;
+        
+        // Hide continue button
+        this.continueRoundBtn.classList.add('hidden');
+        
+        // Start timer
+        this.startGameTimer(data.timeLimit);
+    }
+
+    handleRoundScoringComplete(data) {
+        this.showMessage(`📊 ${data.roundName} chấm điểm hoàn thành!`, 'info');
+        
+        this.tournamentStatus.textContent = `${data.roundName} - Chấm điểm hoàn thành`;
+        
+        // Show leaderboard
+        this.leaderboardCard.classList.remove('hidden');
+        this.displayLeaderboard(data.leaderboard);
+    }
+
+    handleWaitingForHost(data) {
+        this.showMessage(data.message, 'info');
+        
+        // Update tournament status
+        this.tournamentStatus.textContent = 'Chờ host tiếp tục round tiếp theo';
+        this.activePlayers.textContent = data.currentPlayers;
+        
+        // Show continue button if can continue
+        if (data.canContinue) {
+            this.continueRoundBtn.classList.remove('hidden');
+            this.continueRoundBtn.disabled = false;
+            this.continueRoundBtn.textContent = `▶️ Tiếp tục ${data.nextRoundName}`;
+        }
+    }
+
+    handleRoundResults(data) {
+        this.showMessage(`🔥 ${data.roundName}: ${data.eliminated} người bị loại, ${data.survivors} người tiếp tục`, 'warning');
+        
+        // Update elimination count
+        const totalEliminated = parseInt(this.eliminatedPlayers.textContent) + data.eliminated;
+        this.eliminatedPlayers.textContent = totalEliminated;
+        this.activePlayers.textContent = data.survivors;
+        
+        this.tournamentStatus.textContent = `${data.roundName} kết thúc - Cutoff: ${data.cutoffScore}%`;
+    }
+
+    handleTournamentFinished(data) {
+        this.showMessage(`🎉 Tournament kết thúc! Chúc mừng ${data.winner?.playerName || 'Winner'}!`, 'success');
+        
+        this.tournamentStatus.textContent = 'Tournament hoàn thành';
+        
+        // Show final results
+        if (data.finalRanking) {
+            this.leaderboardCard.classList.remove('hidden');
+            this.displayLeaderboard(data.finalRanking);
+        }
+        
+        // Hide continue button
+        this.continueRoundBtn.classList.add('hidden');
+        
+        // Reset UI after delay
+        setTimeout(() => {
+            this.resetTournamentUI();
+        }, 10000);
+    }
+
+    resetTournamentUI() {
+        // Hide tournament card
+        this.tournamentCard.classList.add('hidden');
+        
+        // Show single game controls
+        this.startBtn.classList.remove('hidden');
+        this.startTournamentBtn.classList.remove('hidden');
+        this.resetBtn.classList.remove('hidden');
+        this.resetTournamentBtn.classList.add('hidden');
+        this.continueRoundBtn.classList.add('hidden');
+        
+        // Reset tournament info
+        this.currentRound.textContent = '1';
+        this.roundName.textContent = 'Vòng loại 1';
+        this.activePlayers.textContent = '0';
+        this.eliminatedPlayers.textContent = '0';
+        this.tournamentStatus.textContent = '-';
+    }
+
+    updateTournamentButtons(playerCount) {
+        // Update tournament start button
+        if (playerCount > 0) {
+            this.startTournamentBtn.disabled = false;
+            this.startTournamentBtn.textContent = `🏆 Bắt đầu Tournament (${playerCount} người)`;
+        } else {
+            this.startTournamentBtn.disabled = true;
+            this.startTournamentBtn.textContent = '🏆 Bắt đầu Tournament';
+        }
     }
 }
 
