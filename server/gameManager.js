@@ -586,14 +586,20 @@ class GameManager {
 
     // Kết thúc phase nhập prompt và chờ tất cả chấm điểm xong
     async endPromptPhase() {
-        if (this.gameState !== 'playing') return;
+        // Fix: Allow both 'playing' and 'round-playing' states
+        if (this.gameState !== 'playing' && this.gameState !== 'round-playing') return;
 
-        console.log(`⏰ Prompt phase ended. Submissions: ${this.submissions.size}/${this.players.size}`);
+        const expectedPlayerCount = this.tournamentActive 
+            ? this.getActivePlayers().length 
+            : this.players.size;
+
+        console.log(`⏰ Prompt phase ended. Submissions: ${this.submissions.size}/${expectedPlayerCount}`);
         
-        this.gameState = 'scoring';
+        this.gameState = this.tournamentActive ? 'round-scoring' : 'scoring';
         
         // Update player status
-        for (let [id, player] of this.players) {
+        const activePlayersList = this.tournamentActive ? this.getActivePlayers() : Array.from(this.players.values());
+        for (let player of activePlayersList) {
             player.status = 'scoring';
         }
 
